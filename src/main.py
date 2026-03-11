@@ -1,3 +1,4 @@
+from analysis import analysis
 from api import get_data
 from processing import process_new
 import schedule
@@ -9,6 +10,7 @@ def run_pipeline():
     print("data collected! Starting processing... :D")
     process_new()
     print("Processing done!")
+    analysis()
 
 
 if __name__ == "__main__":

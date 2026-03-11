@@ -19,6 +19,7 @@ def get_data():
         "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&sparkline=true"
     )
     
+    
     #todo : this needs to ve moved 
     headers = {"x_cg_demo_api_key": "CG - G9RLuK6SZfA44AL3DPwnFLKT"}
 
