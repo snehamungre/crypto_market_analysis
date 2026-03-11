@@ -64,6 +64,7 @@ def read_file() -> DataFrame:
     dates = list((data_path.glob("*.json")))
 
     filename = sorted(dates)[-1].name
+    
 
     # Read most recent raw JSON files in folder raw
     df = (
@@ -138,8 +139,28 @@ def data_verification(df) -> DataFrame:
         "total_supply",
     ]
 
+    count_before_filter = df.count()
+    coins_before_filtered = df.select("id")
+
     df = df.filter(F.expr(" AND ".join([f"{c} >= 0" for c in filter_cols])))
     df = df.dropna(subset=filter_cols)
+
+    df = df.filter(F.col("total_volume") <= F.col("market_cap"))
+
+    count_after_filter = count_before_filter - df.count()
+
+    coins_filtered = [
+        c["id"] for c in coins_before_filtered.subtract(df.select("id")).collect()
+    ]
+
+    # logging the number of rows removed and their ids
+    print(f"The number of coins filtered:{count_after_filter}")
+    print(f"The coins filtered:{coins_filtered}")
+
+    if count_after_filter <= 0.3 * count_before_filter:
+        raise Exception(
+            f"An error occurred because as there isn't sufficient valid data \n Before:  {count_before_filter} \n After: {count_after_filter} "
+        )
 
     return df
 
@@ -147,8 +168,9 @@ def data_verification(df) -> DataFrame:
 def save_to_parquet(df):
     try:
         df.write.mode("append").partitionBy("updated_date").parquet("data/processed")
-    except:
-        print("Unable to write data to local storage")
+    except Exception as e:
+        print(f"Unable to write data to local storage due to {e}")
+        raise
 
 
 """
@@ -176,5 +198,6 @@ def process_all():
     try:
         # Write & Save Files in .parquet format (overwrites)
         df.write.mode("overwrite").partitionBy("updated_date").parquet("data/processed")
-    except:
-        print("Unable to write data to local storage")
+    except Exception as e:
+        print(f"Unable to write data to local storage due to {e}")
+        raise

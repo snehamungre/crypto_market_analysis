@@ -13,7 +13,7 @@ def get_data():
         test = "https://api.coingecko.com/api/v3/ping?"
         r = requests.get(test)
 
-    except requests.exceptions.RequestException as e:  # This is the correct syntax
+    except requests.exceptions.RequestException as e:  
         raise SystemExit(e)
 
     # Define API endpoint
