@@ -18,7 +18,8 @@ def get_data():
     url = (
         "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&sparkline=true"
     )
-
+    
+    #todo : this needs to ve moved 
     headers = {"x_cg_demo_api_key": "CG - G9RLuK6SZfA44AL3DPwnFLKT"}
 
     response = requests.get(url, headers=headers)
@@ -31,9 +32,6 @@ def get_data():
 
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
-
-        # todo remove this print line
-        print("data saved in file")
 
     else:
         print(f"Error retrieving data, status code: {response.status_code}")
