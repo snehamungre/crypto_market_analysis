@@ -1,5 +1,7 @@
 from datetime import datetime
 import json
+import os
+from dotenv import load_dotenv
 import requests
 
 # TODO: set up test for API connection
@@ -18,10 +20,11 @@ def get_data():
     url = (
         "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&sparkline=true"
     )
-    
-    
-    #todo : this needs to ve moved 
-    headers = {"x_cg_demo_api_key": "CG - G9RLuK6SZfA44AL3DPwnFLKT"}
+
+    # Get API token from .env file
+    load_dotenv()
+    token = os.getenv("API_KEY")
+    headers = {"x_cg_demo_api_key": token}
 
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
