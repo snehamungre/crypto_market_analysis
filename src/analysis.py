@@ -9,8 +9,7 @@ spark = SparkSession.builder.appName("AnalyseProcessed").getOrCreate()
 
 
 def read_parquet() -> DataFrame:
-    notebook_dir = Path().resolve()
-    data_path = notebook_dir.parent / "data" / "processed"
+    data_path = Path(__file__).resolve().parent.parent / "data" / "processed"
 
     df = spark.read.option("header", True).parquet(str(data_path))
 
@@ -96,6 +95,7 @@ def vol_to_market_ratio(df) -> DataFrame:
         .select(
             "name",
             "vol_market_ratio",
+            "total_volume",
         )
     )
 

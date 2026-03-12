@@ -60,11 +60,9 @@ def read_file() -> DataFrame:
     spark = SparkSession.builder.appName("ReadJSON").getOrCreate()
 
     # get the most recent file (unprocessed)
-    data_path = Path().resolve().parent / "data" / "raw"
+    data_path = Path(__file__).resolve().parent.parent / "data" / "raw"
     dates = list((data_path.glob("*.json")))
-
     filename = sorted(dates)[-1].name
-    
 
     # Read most recent raw JSON files in folder raw
     df = (
@@ -143,11 +141,12 @@ def data_verification(df) -> DataFrame:
     coins_before_filtered = df.select("id")
 
     df = df.filter(F.expr(" AND ".join([f"{c} >= 0" for c in filter_cols])))
+
     df = df.dropna(subset=filter_cols)
 
-    df = df.filter(F.col("total_volume") <= F.col("market_cap"))
+    df = df.filter(F.col("total_volume") < F.col("market_cap"))
 
-    count_after_filter = count_before_filter - df.count()
+    count_after_filter = df.count()
 
     coins_filtered = [
         c["id"] for c in coins_before_filtered.subtract(df.select("id")).collect()
@@ -157,7 +156,7 @@ def data_verification(df) -> DataFrame:
     print(f"The number of coins filtered:{count_after_filter}")
     print(f"The coins filtered:{coins_filtered}")
 
-    if count_after_filter <= 0.3 * count_before_filter:
+    if count_after_filter <= 0.1 * count_before_filter:
         raise Exception(
             f"An error occurred because as there isn't sufficient valid data \n Before:  {count_before_filter} \n After: {count_after_filter} "
         )
