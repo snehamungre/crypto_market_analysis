@@ -43,6 +43,8 @@ The following validation rules are applied during the processing stage. Records 
 - **Null value handling** — Rows with null values in critical numeric fields (`current_price`, `market_cap`, `total_volume`, `circulating_supply`, `total_supply`) are dropped.
 - **Type casting** — Timestamp fields (`last_updated`, `ath_date`, `atl_date`) are cast to proper timestamp types to ensure schema consistency.
 - **Derived date column** — An `updated_date` column is extracted from `last_updated` for partitioning and date-based analysis.
+- **Logical inconsistency check** — Rows where `total_volume` exceeds `market_cap` are removed, as this indicates a data error or market manipulation.
+- **Insufficient data threshold** — If more than 90% of records are removed during validation, the pipeline raises an exception and halts rather than writing degraded data to the processed layer.
 
 > **Note:** The CoinGecko free tier does not guarantee uniform coin coverage across API calls. Some coins may appear on fewer days than others, which affects the reliability of cross-coin averages over time.
 
@@ -174,12 +176,9 @@ A free API token can be obtained from the [CoinGecko API portal](https://docs.co
 ### 4. Run the Pipeline
 
 From the project root directory, run:
-
 ```bash
 python src/main.py
 ```
-
-The pipeline will execute immediately on startup, then continue to run on a 24-hour schedule. Progress messages will be printed to the terminal at each stage.
 
 ### 5. View the Output
 
