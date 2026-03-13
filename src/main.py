@@ -14,7 +14,8 @@ def run_pipeline():
 
 
 if __name__ == "__main__":
-    schedule.every(24).hours.do(run_pipeline)
+    # schedule.every(24).hours.do(run_pipeline)
+    run_pipeline()
 
     while True:
         schedule.run_pending()

@@ -140,6 +140,7 @@ def top_performing_asset(avg_market, avg_price, vol_market_ratio) -> DataFrame:
 
 def analysis():
     df = read_parquet()
+    spark.sparkContext.setLogLevel("ERROR")
 
     curr_top_price, curr_top_market, date = current_statistics(df)
     avg_market_cap, avg_price = aggregate_statistics(df)
