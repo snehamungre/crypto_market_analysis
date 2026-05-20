@@ -24,6 +24,7 @@ def get_data():
     # Get API token from .env file
     load_dotenv()
     token = os.getenv("API_KEY")
+    base_path = os.getenv("PROJECT_BASE_PATH")
     headers = {"x_cg_demo_api_key": token}
 
     response = requests.get(url, headers=headers)
@@ -32,7 +33,7 @@ def get_data():
 
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         # store API response to raw file
-        file_path = f"data/raw/crypto_market_data_raw_{timestamp}.json"
+        file_path = f"{base_path}/data/raw/crypto_market_data_raw_{timestamp}.json"
 
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)

@@ -1,8 +1,10 @@
 import datetime
 from airflow import DAG
-
+from airflow.models import Variable
 from airflow.operators.bash import BashOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+
+BASE_PATH = Variable.get("crypto_project_base_path")
 
 with DAG(
     dag_id="cryptoAnalysisPipeline",
@@ -13,13 +15,13 @@ with DAG(
 
     task_1 = BashOperator(
         task_id="api",
-        bash_command="python src/main/python/api.py",
+        bash_command=f"python {BASE_PATH}/src/main/python/api.py",
     )
 
     task_2 = SparkSubmitOperator(
         task_id="processing",
         conn_id="spark_default",
-        application="target/scala-2.12/cryptomarketanalysis_2.12-1.1.jar",
+        application=f"{BASE_PATH}/target/scala-2.12/cryptomarketanalysis_2.12-1.1.jar",
         java_class="Processing",
         application_args=["{{ ds }}"],
         dag=dag,
@@ -28,9 +30,9 @@ with DAG(
     task_3 = SparkSubmitOperator(
         task_id="analysis",
         conn_id="spark_default",
-        application="target/scala-2.12/cryptomarketanalysis_2.12-1.1.jar",
+        application=f"{BASE_PATH}/target/scala-2.12/cryptomarketanalysis_2.12-1.1.jar",
         java_class="Analytics",
-        application_args=["{{ ds }}"],
+        application_args=["{{ ds }}", BASE_PATH],
         dag=dag,
     )
 

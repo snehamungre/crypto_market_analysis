@@ -5,11 +5,13 @@ import org.apache.spark.sql.expressions.Window
 object Analytics {
   def main(args: Array[String]): Unit = {
     // Airflow will pass the date as the first argument (e.g., "2026-03-12")
-    if (args.length < 1) {
+    if (args.length < 2) {
       System.err.println("Usage: Analytics <date_YYYY-MM-DD>")
       System.exit(1)
     }
     val processDate = args(0)
+    val basePath = args(1)
+
 
     val spark = SparkSession.builder()
       .appName("CryptoMarketAnalysis")
@@ -18,28 +20,26 @@ object Analytics {
 
     // Enable dynamic partition overwrite for our daily metrics
     spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
-    // Hide spammy logs
     spark.sparkContext.setLogLevel("ERROR")
 
-    // 1. Read ALL processed data (needed for historical averages)
+    // Read ALL processed data (for historical averages)
     val df = spark.read
       .option("header", "true")
-      .parquet("data/processed")
-      .cache() // Cache it since we reuse it multiple times
+      .parquet(s"$basePath/data/processed")
+      .cache() 
 
-    // 2. Perform Transformations
+    // Perform Transformations
     val (currTopPrice, currTopMarket) = currentStatistics(df, processDate)
     val (avgMarketCap, avgPrice) = aggregateStatistics(spark, df)
     val volMarketRatio = volToMarketRatio(df)
     val topPerforming = topPerformingAsset(avgMarketCap, avgPrice, volMarketRatio)
 
-    // 3. Save to Parquet and update Hive
-    saveAnalytics(spark, currTopPrice, currTopMarket, avgMarketCap, avgPrice, volMarketRatio, topPerforming, processDate)
+    // Save to Parquet and update Hive
+    saveAnalytics(spark, currTopPrice, currTopMarket, avgMarketCap, avgPrice, volMarketRatio, topPerforming, processDate,basePath)
 
     spark.stop()
   }
 
-  // Notice: Instead of calculating max_date, we just use the processDate from Airflow
   def currentStatistics(df: DataFrame, processDate: String): (DataFrame, DataFrame) = {
     val recentData = df.filter(col("updated_date") === processDate)
       .select("name", "current_price", "market_cap", "market_cap_rank", "updated_date", "total_volume")
@@ -117,22 +117,22 @@ object Analytics {
                     currTopPrice: DataFrame, currTopMarket: DataFrame, 
                     avgMarketCap: DataFrame, avgPrice: DataFrame, 
                     volMarketRatio: DataFrame, topPerforming: DataFrame, 
-                    processDate: String): Unit = {
-    val basePath = "data/analytics"
+                    processDate: String, basePath:String): Unit = {
+    val analyticsPath = s"$basePath/data/analytics"
 
     try {
-      // 1. Partitioned Daily Data (Uses dynamic overwrite to replace just today's data)
-      currTopPrice.write.mode(SaveMode.Overwrite).partitionBy("updated_date").parquet(s"$basePath/curr_top_price")
+      // Partitioned Daily Data 
+      currTopPrice.write.mode(SaveMode.Overwrite).partitionBy("updated_date").parquet(s"$analyticsPath/curr_top_price")
       spark.sql(s"ALTER TABLE analytics_curr_top_price ADD IF NOT EXISTS PARTITION (updated_date='$processDate')")
 
-      currTopMarket.write.mode(SaveMode.Overwrite).partitionBy("updated_date").parquet(s"$basePath/curr_top_market")
+      currTopMarket.write.mode(SaveMode.Overwrite).partitionBy("updated_date").parquet(s"$analyticsPath/curr_top_market")
       spark.sql(s"ALTER TABLE analytics_curr_top_market ADD IF NOT EXISTS PARTITION (updated_date='$processDate')")
 
-      // 2. Unpartitioned Historical Data (Overwrites the whole table every run)
-      avgMarketCap.write.mode(SaveMode.Overwrite).parquet(s"$basePath/avg_market_cap")
-      avgPrice.write.mode(SaveMode.Overwrite).parquet(s"$basePath/avg_price")
-      volMarketRatio.write.mode(SaveMode.Overwrite).parquet(s"$basePath/vol_market_ratio")
-      topPerforming.write.mode(SaveMode.Overwrite).parquet(s"$basePath/top_performing_assets")
+      // Unpartitioned Historical Data (Overwrites the whole table every run)
+      avgMarketCap.write.mode(SaveMode.Overwrite).parquet(s"$analyticsPath/avg_market_cap")
+      avgPrice.write.mode(SaveMode.Overwrite).parquet(s"$analyticsPath/avg_price")
+      volMarketRatio.write.mode(SaveMode.Overwrite).parquet(s"$analyticsPath/vol_market_ratio")
+      topPerforming.write.mode(SaveMode.Overwrite).parquet(s"$analyticsPath/top_performing_assets")
       
     } catch {
       case e: Exception =>

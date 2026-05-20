@@ -42,11 +42,12 @@ object Processing {
 
   def main(args: Array[String]): Unit = {
     // Airflow will pass the date as the first argument 
-    if (args.length < 1) {
+    if (args.length < 2) {
       System.err.println("Usage: Processing <date_YYYY-MM-DD>")
       System.exit(1)
     }
     val processDate = args(0)
+    val basePath = args(1)
 
     // Initialize Spark with Hive Support enabled
     val spark = SparkSession.builder()
@@ -58,17 +59,17 @@ object Processing {
     spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
 
     // Execution Flow
-    var df = readFiles(spark, processDate)
+    var df = readFiles(spark, processDate, basePath)
     df = calculateSparklineStats(df)
     df = dataVerification(df)
-    saveToParquetAndHive(spark, df, processDate)
+    saveToParquetAndHive(spark, df, processDate, basePath)
 
     spark.stop()
   }
 
   // Incremental Read Method
-  def readFiles(spark: SparkSession, processDate: String): DataFrame = {
-    val dataPath = s"data/raw/*$processDate*.json"
+  def readFiles(spark: SparkSession, processDate: String, basePath:String): DataFrame = {
+    val dataPath = s"$basePath/data/raw/*$processDate*.json"
     spark.read
       .option("multiLine", true)
       .option("header", true)
@@ -131,12 +132,12 @@ object Processing {
   }
 
   // Save Method
-  def saveToParquetAndHive(spark: SparkSession, df: DataFrame, processDate: String): Unit = {
+  def saveToParquetAndHive(spark: SparkSession, df: DataFrame, processDate: String, basePath:String): Unit = {
     try {
       df.write
         .mode("overwrite")
         .partitionBy("updated_date")
-        .parquet("data/processed")
+        .parquet(s"$basePath/data/raw/*$processDate*.json")
 
       // Register/Update the Hive External Table
       spark.sql(s"""
@@ -173,7 +174,6 @@ object Processing {
         LOCATION 'data/processed'
       """)
 
-      // Let Hive know a new partition folder was added
       spark.sql(s"""
         ALTER TABLE processed_crypto_data 
         ADD IF NOT EXISTS PARTITION (updated_date='$processDate')
