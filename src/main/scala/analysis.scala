@@ -114,26 +114,65 @@ object Analytics {
   }
 
   def saveAnalytics(spark: SparkSession, 
-                    currTopPrice: DataFrame, currTopMarket: DataFrame, 
-                    avgMarketCap: DataFrame, avgPrice: DataFrame, 
-                    volMarketRatio: DataFrame, topPerforming: DataFrame, 
-                    processDate: String, basePath:String): Unit = {
+                  currTopPrice: DataFrame, currTopMarket: DataFrame, 
+                  avgMarketCap: DataFrame, avgPrice: DataFrame, 
+                  volMarketRatio: DataFrame, topPerforming: DataFrame, 
+                  processDate: String, basePath: String): Unit = {
     val analyticsPath = s"$basePath/data/analytics"
 
     try {
-      // Partitioned Daily Data 
-      currTopPrice.write.mode(SaveMode.Overwrite).partitionBy("updated_date").parquet(s"$analyticsPath/curr_top_price")
+      // --- currTopPrice (partitioned) ---
+      currTopPrice.write.mode(SaveMode.Overwrite)
+        .partitionBy("updated_date")
+        .parquet(s"$analyticsPath/curr_top_price")
+
+      spark.sql(s"""
+        CREATE EXTERNAL TABLE IF NOT EXISTS analytics_curr_top_price (
+          name STRING,
+          current_price DOUBLE,
+          market_cap BIGINT,
+          market_cap_rank BIGINT,
+          total_volume DOUBLE,
+          current_price_rank INT
+        )
+        PARTITIONED BY (updated_date DATE)
+        STORED AS PARQUET
+        LOCATION '$analyticsPath/curr_top_price'
+      """)
       spark.sql(s"ALTER TABLE analytics_curr_top_price ADD IF NOT EXISTS PARTITION (updated_date='$processDate')")
 
-      currTopMarket.write.mode(SaveMode.Overwrite).partitionBy("updated_date").parquet(s"$analyticsPath/curr_top_market")
+      // --- currTopMarket (partitioned) ---
+      currTopMarket.write.mode(SaveMode.Overwrite)
+        .partitionBy("updated_date")
+        .parquet(s"$analyticsPath/curr_top_market")
+
+      spark.sql(s"""
+        CREATE EXTERNAL TABLE IF NOT EXISTS analytics_curr_top_market (
+          name STRING,
+          current_price DOUBLE,
+          market_cap BIGINT,
+          market_cap_rank BIGINT,
+          total_volume DOUBLE
+        )
+        PARTITIONED BY (updated_date DATE)
+        STORED AS PARQUET
+        LOCATION '$analyticsPath/curr_top_market'
+      """)
       spark.sql(s"ALTER TABLE analytics_curr_top_market ADD IF NOT EXISTS PARTITION (updated_date='$processDate')")
 
-      // Unpartitioned Historical Data (Overwrites the whole table every run)
-      avgMarketCap.write.mode(SaveMode.Overwrite).parquet(s"$analyticsPath/avg_market_cap")
-      avgPrice.write.mode(SaveMode.Overwrite).parquet(s"$analyticsPath/avg_price")
-      volMarketRatio.write.mode(SaveMode.Overwrite).parquet(s"$analyticsPath/vol_market_ratio")
-      topPerforming.write.mode(SaveMode.Overwrite).parquet(s"$analyticsPath/top_performing_assets")
-      
+      // --- Unpartitioned historical tables (no ALTER TABLE needed) ---
+      avgMarketCap.write.mode(SaveMode.Overwrite)
+        .parquet(s"$analyticsPath/avg_market_cap")
+
+      avgPrice.write.mode(SaveMode.Overwrite)
+        .parquet(s"$analyticsPath/avg_price")
+
+      volMarketRatio.write.mode(SaveMode.Overwrite)
+        .parquet(s"$analyticsPath/vol_market_ratio")
+
+      topPerforming.write.mode(SaveMode.Overwrite)
+        .parquet(s"$analyticsPath/top_performing_assets")
+
     } catch {
       case e: Exception =>
         println(s"Unable to write analytics data due to: ${e.getMessage}")

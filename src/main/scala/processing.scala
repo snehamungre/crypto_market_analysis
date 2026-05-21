@@ -132,14 +132,14 @@ object Processing {
   }
 
   // Save Method
-  def saveToParquetAndHive(spark: SparkSession, df: DataFrame, processDate: String, basePath:String): Unit = {
+  def saveToParquetAndHive(spark: SparkSession, df: DataFrame, processDate: String, basePath: String): Unit = {
+    val processedPath = s"$basePath/data/processed"   
     try {
       df.write
         .mode("overwrite")
         .partitionBy("updated_date")
-        .parquet(s"$basePath/data/raw/*$processDate*.json")
+        .parquet(processedPath)
 
-      // Register/Update the Hive External Table
       spark.sql(s"""
         CREATE EXTERNAL TABLE IF NOT EXISTS processed_crypto_data (
           id STRING,
@@ -165,23 +165,23 @@ object Processing {
           atl_change_percentage DOUBLE,
           atl_date TIMESTAMP,
           last_updated TIMESTAMP,
-          7d_max DOUBLE,
-          7d_low DOUBLE,
-          7d_avg DOUBLE
+          `7d_max` DOUBLE,
+          `7d_low` DOUBLE,
+          `7d_avg` DOUBLE
         )
         PARTITIONED BY (updated_date DATE)
         STORED AS PARQUET
-        LOCATION 'data/processed'
+        LOCATION '$processedPath'    
       """)
 
       spark.sql(s"""
-        ALTER TABLE processed_crypto_data 
+        ALTER TABLE processed_crypto_data
         ADD IF NOT EXISTS PARTITION (updated_date='$processDate')
       """)
 
     } catch {
       case e: Exception =>
-        println(s"Unable to write data to local storage/Hive due to ${e.getMessage}")
+        println(s"Unable to write data: ${e.getMessage}")
         throw e
     }
   }
