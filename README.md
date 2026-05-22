@@ -1,6 +1,6 @@
 # crypto_market_analysis
 
-An end-to-end data engineering pipeline that ingests live cryptocurrency market data from a public REST API, processes it using PySpark, performs analytical transformations using both the DataFrame API and Spark SQL, and produces a structured analytics dataset with built-in data quality validations.
+An end-to-end data engineering pipeline that ingests live cryptocurrency market data from a public REST API, processes it using Apache Spark, performs analytical transformations using the Spark DataFrame API and Spark SQL, and produces a structured analytics dataset with built-in data quality validations. The pipeline is orchestrated end-to-end using Apache Airflow and implemented across Python (ingestion) and Scala (processing and analytics).
 
 ---
 
@@ -10,7 +10,7 @@ An end-to-end data engineering pipeline that ingests live cryptocurrency market 
 - [Data Quality Rules](#data-quality-rules)
 - [SQL Transformations](#sql-transformations)
 - [Partitioning Strategy](#partitioning-strategy)
-- [Sample Output](#output)
+- [Sample Output](#sample-output)
 - [Assumptions](#assumptions)
 - [Limitations](#limitations)
 - [How to Run](#how-to-run)
@@ -19,18 +19,28 @@ An end-to-end data engineering pipeline that ingests live cryptocurrency market 
 
 ## Architecture and Design
 
-Cryptocurrency markets update continuously, making a scheduled daily pipeline the most appropriate design for this use case. The pipeline follows a three-layer architecture:
+![Architecture diagram](images/Crypto_Pipeline_Architecture.svg)
+
+Cryptocurrency markets update continuously, making a scheduled daily pipeline the most appropriate design for this use case. The pipeline follows a three-layer architecture, implemented across two languages and orchestrated by Apache Airflow:
 
 **1. Raw Ingestion — `data/raw/`**
-Market data is fetched from the [CoinGecko Markets API](https://docs.coingecko.com/v3.0.1/reference/coins-markets) REST endpoint and saved as a timestamped JSON file. Note that the API returns data available at the time of the request; individual coin records may have been last updated on different dates.
+A Python script (`src/main/python/api.py`) fetches market data from the [CoinGecko Markets API](https://docs.coingecko.com/v3.0.1/reference/coins-markets) REST endpoint and saves it as a date-stamped JSON file. This task is triggered daily by an Airflow `BashOperator`. Note that the API returns data available at the time of the request; individual coin records may have been last updated on different dates.
 
 **2. Processed Layer — `data/processed/`**
-The raw JSON is read, cleaned, and validated according to the data quality rules described below. The cleaned data is then written to Parquet format, partitioned by `updated_date`, in append mode to preserve historical snapshots.
+A Scala Spark job (`src/main/scala/processing.scala`) reads the raw JSON file for the current execution date, applies data quality validations, and writes the cleaned data to Parquet format partitioned by `updated_date`. After each write, the corresponding Hive external table (`processed_crypto_data`) is updated with the new partition. This task is submitted to Spark by an Airflow `SparkSubmitOperator`.
 
 **3. Analytics Layer — `data/analytics/`**
-The processed Parquet data is read by `analysis.py`, which applies Spark SQL aggregations and window function rankings. The resulting analytical tables are written to `data/analytics/` for downstream reporting use cases.
+A second Scala Spark job (`src/main/scala/analysis.scala`) reads the full processed dataset, applies Spark SQL aggregations and window function rankings, and writes the results to `data/analytics/`. Daily snapshot tables are partitioned by `updated_date` and registered as Hive external tables; historical aggregate tables are overwritten on each run. This task is also submitted via `SparkSubmitOperator`.
 
-The pipeline is orchestrated by a scheduler in `main.py` that runs all three stages sequentially every 24 hours.
+**Orchestration**
+All three stages are defined as sequential tasks in an Airflow DAG (`dags/crypto_pipeline_dag.py`), scheduled to run daily. The DAG passes the execution date (`{{ ds }}`) to each task, ensuring each stage processes only the data relevant to that day's run.
+
+**Build**
+The Scala source files are compiled into a single JAR using `sbt` before the pipeline is run. Airflow submits this JAR to Spark for both the processing and analytics stages.
+
+```
+task_1 (api.py) >> task_2 (Processing.jar) >> task_3 (Analytics.jar)
+```
 
 ---
 
@@ -43,8 +53,6 @@ The following validation rules are applied during the processing stage. Records 
 - **Null value handling** — Rows with null values in critical numeric fields (`current_price`, `market_cap`, `total_volume`, `circulating_supply`, `total_supply`) are dropped.
 - **Type casting** — Timestamp fields (`last_updated`, `ath_date`, `atl_date`) are cast to proper timestamp types to ensure schema consistency.
 - **Derived date column** — An `updated_date` column is extracted from `last_updated` for partitioning and date-based analysis.
-- **Logical inconsistency check** — Rows where `total_volume` exceeds `market_cap` are removed, as this indicates a data error or market manipulation.
-- **Insufficient data threshold** — If more than 90% of records are removed during validation, the pipeline raises an exception and halts rather than writing degraded data to the processed layer.
 
 > **Note:** The CoinGecko free tier does not guarantee uniform coin coverage across API calls. Some coins may appear on fewer days than others, which affects the reliability of cross-coin averages over time.
 
@@ -97,6 +105,19 @@ This decision is motivated by two factors:
 
 ---
 
+## Sample Output
+
+The table below shows a sample of the final analytics output, combining average market cap, average price, total volume, and volume-to-market-cap ratio rankings into a single top-performing assets view.
+
+| name        | top_performing_rank |   avg_market_cap   | avg_market_cap_rank | average_price | avg_price_rank |   total_volume  | vol_market_ratio | vol_market_rank | top_performing_score |
+|-------------|:-------------------:|:------------------:|:-------------------:|:-------------:|:--------------:|:---------------:|:----------------:|:---------------:|:--------------------:|
+| Ethereum    |          1          |  2.447566175596E11 |          2          |    2026.751   |        4       | 3.1391592618E10 |      0.12236     |        27       |           8          |
+| Bitcoin     |          2          | 1.3776601759463E12 |          1          |    68839.2    |        1       |  7.194525264E10 |      0.12236     |        52       |          11          |
+| Solana      |          3          |  4.92225953663E10  |          7          |     86.283    |       13       |  6.426767762E9  |      0.12365     |        26       |          13          |
+| Tether Gold |          4          |   2.8750949604E9   |          35         |    5173.367   |        3       |   9.75957539E8  |      0.12365     |        8        |          17          |
+| PAX Gold    |          5          |   2.5447346606E9   |          37         |    5214.701   |        2       |   7.61452059E8  |      0.12365     |        11       |          18          |
+---
+
 ## Assumptions
 
 **Top-Performing Coin Ranking Methodology**
@@ -117,20 +138,6 @@ The composite rank is calculated as a weighted sum with the following weights:
 
 Rankings are derived from historical data rather than single-day snapshots, as aggregated metrics are less susceptible to short-term market fluctuations.
 
-
-#### Output
-
-The table below shows a sample of the final analytics output, combining average market cap, average price, and volume/market cap ratio rankings into a single top-performing assets view.
-
-| name        | top_performing_rank |   avg_market_cap   | avg_market_cap_rank | average_price | avg_price_rank |   total_volume  | vol_market_ratio | vol_market_rank | top_performing_score |
-|-------------|:-------------------:|:------------------:|:-------------------:|:-------------:|:--------------:|:---------------:|:----------------:|:---------------:|:--------------------:|
-| Ethereum    |          1          |  2.447566175596E11 |          2          |    2026.751   |        4       | 3.1391592618E10 |      0.12236     |        27       |           8          |
-| Bitcoin     |          2          | 1.3776601759463E12 |          1          |    68839.2    |        1       |  7.194525264E10 |      0.12236     |        52       |          11          |
-| Solana      |          3          |  4.92225953663E10  |          7          |     86.283    |       13       |  6.426767762E9  |      0.12365     |        26       |          13          |
-| Tether Gold |          4          |   2.8750949604E9   |          35         |    5173.367   |        3       |   9.75957539E8  |      0.12365     |        8        |          17          |
-| PAX Gold    |          5          |   2.5447346606E9   |          37         |    5214.701   |        2       |   7.61452059E8  |      0.12365     |        11       |          18          |
----
-
 ---
 
 ## Limitations
@@ -143,12 +150,15 @@ The table below shows a sample of the final analytics output, combining average 
 
 ## How to Run
 
+The pipeline is designed to be orchestrated via Apache Airflow. The following outlines the setup required to reproduce the environment locally.
+
 ### Prerequisites
 
-Ensure the following are installed on your machine before proceeding:
-
-- **Java 17 or above** — Required by PySpark. You can verify your version by running `java -version` in your terminal. Java can be downloaded from [oracle.net](https://www.oracle.com/ae/java/technologies/downloads/).
-- **Python 3.8 or above**
+- **Java 17 or above** — Required by Apache Spark.
+- **Python 3.8 or above** — Required for Airflow and the ingestion script.
+- **Scala 2.13 and sbt** — Required to compile the processing and analytics Spark jobs into a JAR.
+- **Apache Airflow** — Used to orchestrate the pipeline. The project was developed and tested using Airflow in standalone mode.
+- **A CoinGecko API key** — A free key can be obtained from the [CoinGecko API portal](https://docs.coingecko.com/v3.0.1/reference/coins-markets).
 
 ### 1. Clone the Repository
 
@@ -157,7 +167,7 @@ git clone https://github.com/snehamungre/crypto_market_analysis.git
 cd crypto_market_analysis
 ```
 
-### 2. Install Dependencies
+### 2. Install Python Dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -171,18 +181,35 @@ Create a `.env` file in the project root directory with the following contents:
 API_KEY=your_coingecko_api_key_here
 ```
 
-A free API token can be obtained from the [CoinGecko API portal](https://docs.coingecko.com/v3.0.1/reference/coins-markets). Do not commit this file to version control.
+Do not commit this file to version control — it is excluded via `.gitignore`.
 
-### 4. Run the Pipeline
+### 4. Compile the Scala JAR
 
-From the project root directory, run:
+From the project root, run:
+
 ```bash
-python src/main.py
+sbt package
 ```
 
-### 5. View the Output
+This compiles `processing.scala` and `analysis.scala` into a single JAR at `target/scala-2.13/cryptomarketanalysis_2.13-1.1.jar`, which Airflow submits to Spark.
 
-Analytical results are written to `data/analytics/` after each successful run.
+### 5. Configure Airflow
+Start Airflow in standalone mode by running the following command in the terminal:
+bashairflow standalone
 
+This will start the Airflow UI at http://localhost:8080. Login credentials are generated automatically and can be found in the `simple_auth_manager_passwords.json.generated` file in the Airflow home directory.
+
+In the Airflow UI, set the following before triggering the DAG:
+
+- **Variable** — `crypto_project_base_path`: the absolute path to the project root on your machine.
+- **Connection** — `spark_default`: a Spark connection pointing to your local Spark installation.
+
+### 6. Trigger the DAG
+
+Start Airflow in standalone mode and enable the `cryptoAnalysisPipeline` DAG. The pipeline will run daily, or can be triggered manually for a specific execution date.
+
+### 7. View the Output
+
+Analytical results are written to `data/analytics/` after each successful run. Hive external tables are registered and updated automatically during each pipeline execution.
 
 
