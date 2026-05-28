@@ -1,6 +1,7 @@
 import org.apache.spark.sql.{SparkSession, DataFrame}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.functions._
+import org.apache.log4j.Logger
 
 object Processing {
   // defining the schema
@@ -39,6 +40,8 @@ object Processing {
     StructField("total_supply", DoubleType, true),
     StructField("total_volume", DoubleType, true)
   ))
+
+  val logger = Logger.getLogger(getClass.getName)
 
   def main(args: Array[String]): Unit = {
     // Airflow will pass the date as the first argument 
@@ -121,11 +124,14 @@ object Processing {
       .collect()
       .map(row => row.getString(0)) // Extract string from Row
 
-    println(s"The number of coins filtered: ${countBefore - countAfter}")
-    println(s"The coins filtered: ${coinsFiltered.mkString(", ")}")
+    logger.info(s"The number of coins filtered: ${countBefore - countAfter}")
+    logger.info(s"The coins filtered: ${coinsFiltered.mkString(", ")}")
 
+    // Error: Insufficient data
     if (countAfter <= 0.1 * countBefore) {
-      throw new Exception(s"An error occurred because there isn't sufficient valid data \n Before: $countBefore \n After: $countAfter")
+      val ex = new Exception(s"Insufficient valid data. Before: $countBefore After: $countAfter")
+      logger.error(ex.getMessage)
+      throw ex
     }
 
     processedDf
@@ -181,7 +187,7 @@ object Processing {
 
     } catch {
       case e: Exception =>
-        println(s"Unable to write data: ${e.getMessage}")
+        logger.error(s"Unable to write data to ${processedPath}: ${e.getMessage}")
         throw e
     }
   }
