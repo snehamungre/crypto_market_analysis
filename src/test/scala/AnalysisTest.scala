@@ -65,6 +65,22 @@ class AnalysisTest extends AnyFunSuite with DataFrameSuiteBase {
     assert(topMarketRow.getAs[String]("name") == "Ethereum")
   }
 
+  test("volToMarketRatio excludes rows where total_volume is null") {
+    val data = Seq(
+      Row("Bitcoin",  1381651251183L, 20154184933.0, "2026-05-01"),
+      Row("Ethereum", 239754873918L,  null,           "2026-05-01")
+    )
+    val schema = StructType(Array(
+      StructField("name",         StringType, true),
+      StructField("market_cap",   LongType,   true),
+      StructField("total_volume", DoubleType, true),
+      StructField("updated_date", StringType, true)
+    ))
+    val df = spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+    val result = Analytics.volToMarketRatio(df)
+    assert(result.filter("name = 'Ethereum'").count() == 0)
+  }
+
   test("volToMarketRatio filters duplicate coins with lower volToMarket ratio") {
     val data = Seq(
       // Bitcoin - two dates, different ratios (0.05 should win)
@@ -94,5 +110,45 @@ class AnalysisTest extends AnyFunSuite with DataFrameSuiteBase {
     // Ensure that Bitcoin 0.05 should win
     val bitcoinRatio = volToMarket.filter("name = 'Bitcoin'").collect()(0).getAs[Double]("vol_market_ratio")
     assert(math.abs(bitcoinRatio - 0.05) < 0.001)
+  }
+
+  test("top performing score is calculated correctly using weighted formula") {
+    val avgMarket = spark.createDataFrame(spark.sparkContext.parallelize(Seq(
+      Row("Bitcoin",  1381651251183.0, 1),
+      Row("Ethereum", 239754873918.0,  2),
+      Row("BNB",      85497466223.0,   3)
+    )), StructType(Array(
+      StructField("name",                StringType, true),
+      StructField("avg_market_cap",      DoubleType, true),
+      StructField("avg_market_cap_rank", IntegerType, true)
+    )))
+
+    val avgPrice = spark.createDataFrame(spark.sparkContext.parallelize(Seq(
+      Row("Bitcoin",  70187.0, 1),
+      Row("Ethereum", 1986.61, 2),
+      Row("BNB",      634.23,  3)
+    )), StructType(Array(
+      StructField("name",           StringType, true),
+      StructField("average_price",  DoubleType, true),
+      StructField("avg_price_rank", IntegerType, true)
+    )))
+
+    val volMarket = spark.createDataFrame(spark.sparkContext.parallelize(Seq(
+      Row("Bitcoin",  20154184933.0, 0.05, 1),
+      Row("Ethereum", 16933980770.0, 0.07, 2),
+      Row("BNB",      746909186.0,   0.008, 3)
+    )), StructType(Array(
+      StructField("name",            StringType, true),
+      StructField("total_volume",    DoubleType, true),
+      StructField("vol_market_ratio",DoubleType, true),
+      StructField("vol_market_rank", IntegerType, true)
+    )))
+
+    val result = Analytics.topPerformingAsset(avgMarket, avgPrice, volMarket)
+    val bitcoinRow = result.filter("name = 'Bitcoin'").collect()(0)
+
+    // 1*0.4 + 1*0.4 + 1*0.2 = 1.0
+    assert(math.abs(bitcoinRow.getAs[Double]("top_performing_score") - 1.0) < 0.001)
+    assert(bitcoinRow.getAs[Int]("top_performing_rank") == 1)
   }
 }

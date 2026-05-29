@@ -13,13 +13,12 @@ An end-to-end data engineering pipeline that ingests live cryptocurrency market 
 - [Sample Output](#sample-output)
 - [Assumptions](#assumptions)
 - [Limitations](#limitations)
+- [Testing](#testing)
 - [How to Run](#how-to-run)
 
 ---
 
 ## Architecture and Design
-
-![Architecture diagram](images/Crypto_Pipeline_Architecture.svg)
 
 Cryptocurrency markets update continuously, making a scheduled daily pipeline the most appropriate design for this use case. The pipeline follows a three-layer architecture, implemented across two languages and orchestrated by Apache Airflow:
 
@@ -109,13 +108,14 @@ This decision is motivated by two factors:
 
 The table below shows a sample of the final analytics output, combining average market cap, average price, total volume, and volume-to-market-cap ratio rankings into a single top-performing assets view.
 
-| name        | top_performing_rank |   avg_market_cap   | avg_market_cap_rank | average_price | avg_price_rank |   total_volume  | vol_market_ratio | vol_market_rank | top_performing_score |
-|-------------|:-------------------:|:------------------:|:-------------------:|:-------------:|:--------------:|:---------------:|:----------------:|:---------------:|:--------------------:|
-| Ethereum    |          1          |  2.447566175596E11 |          2          |    2026.751   |        4       | 3.1391592618E10 |      0.12236     |        27       |           8          |
-| Bitcoin     |          2          | 1.3776601759463E12 |          1          |    68839.2    |        1       |  7.194525264E10 |      0.12236     |        52       |          11          |
-| Solana      |          3          |  4.92225953663E10  |          7          |     86.283    |       13       |  6.426767762E9  |      0.12365     |        26       |          13          |
-| Tether Gold |          4          |   2.8750949604E9   |          35         |    5173.367   |        3       |   9.75957539E8  |      0.12365     |        8        |          17          |
-| PAX Gold    |          5          |   2.5447346606E9   |          37         |    5214.701   |        2       |   7.61452059E8  |      0.12365     |        11       |          18          |
+| top_performing_rank | name        | avg_market_cap      | avg_market_cap_rank | average_price | avg_price_rank | total_volume        | vol_market_ratio | vol_market_rank |
+|:-------------------:|-------------|:-------------------:|:-------------------:|:-------------:|:--------------:|:-------------------:|:----------------:|:---------------:|
+| 8                   | Ethereum    | 2.447566175596E11   | 2                   | 2026.751      | 4              | 3.1391592618E10     | 0.12236          | 27              |
+| 11                  | Bitcoin     | 1.3776601759463E12  | 1                   | 68839.2       | 1              | 7.194525264E10      | 0.12236          | 52              |
+| 13                  | Solana      | 4.92225953663E10    | 7                   | 86.283        | 13             | 6.426767762E9       | 0.12365          | 26              |
+| 17                  | Tether Gold | 2.8750949604E9      | 35                  | 5173.367      | 3              | 9.75957539E8        | 0.12365          | 8               |
+| 18                  | PAX Gold    | 2.5447346606E9      | 37                  | 5214.701      | 2              | 7.61452059E8        | 0.12365          | 11              |
+
 ---
 
 ## Assumptions
@@ -145,6 +145,70 @@ Rankings are derived from historical data rather than single-day snapshots, as a
 - The CoinGecko free tier API returns up to 250 coins per request and does not provide bulk historical data. Historical depth is accumulated organically through daily scheduled runs.
 - Not all coins are returned consistently across every API call. Average-based metrics should be interpreted with this in mind, as some coins may have fewer data points than others.
 - The `updated_date` column is derived from the `last_updated` field provided by the API, which reflects when CoinGecko last updated that coin's data — not necessarily when the pipeline ran.
+
+---
+
+## Testing
+
+The testing strategy covers two levels: unit tests that validate each transformation independently, and integration-level checks that verify end-to-end pipeline correctness.
+
+### Unit Tests
+
+Unit tests were written in Scala using **ScalaTest** and **spark-testing-base**. All tests follow the Arrange, Act, Assert (AAA) pattern and operate on in-memory DataFrames — no disk I/O is performed. Test data was hand-crafted so that expected outputs are known before execution.
+
+I/O operations (`readFiles`, `saveToParquetAndHive`) were deliberately excluded from unit testing, as these depend on external state and filesystem availability. They are better suited to integration testing.
+
+The following functions are covered:
+
+| Function | Test Cases |
+|---|---|
+| `dataVerification` | Duplicate removal, negative value filtering, null handling, volume/market cap filter, 90% data threshold halt |
+| `currentStatistics` | Price ranking correctness, market cap ordering for a single-day snapshot |
+| `aggregateStatistics` | Average price and market cap rankings computed correctly across multiple dates |
+| `volToMarketRatio` | Deduplication retains the highest ratio per coin across dates |
+| `topPerformingAsset` | Weighted scoring formula produces the correct composite ranking |
+
+Two design decisions worth noting:
+
+- **Floating point precision** — the `volToMarketRatio` tests use tolerance-based assertions rather than exact equality, to handle floating point rounding in the ratio calculation.
+- **Failure path testing** — the 90% threshold test uses `assertThrows` to assert that the pipeline raises an exception when data is too degraded. Testing that the pipeline fails correctly is as important as testing that it succeeds.
+
+### Integration Testing
+
+The following validation steps were carried out to verify the pipeline operates correctly end-to-end.
+
+**End-to-end pipeline execution**
+The full pipeline was run successfully via the Airflow standalone UI, with all three tasks — `api`, `processing`, and `analysis` — completing without errors in sequential order.
+
+**Data quality filter verification**
+The processing stage logs the count and IDs of any records dropped during validation. These logs are accessible via the Airflow UI under the `processing` task run. The following output confirms the filters executed correctly:
+
+```
+The number of coins filtered: X
+The coins filtered: coin_id_1, coin_id_2, ...
+```
+
+**Hive table registration**
+Hive external tables were verified using `spark-sql` after a successful pipeline run:
+
+```sql
+-- Confirm tables are registered
+SHOW TABLES;
+
+-- Inspect the processed table schema
+DESCRIBE processed_crypto_data;
+
+-- Confirm partitions are registered by date
+SHOW PARTITIONS processed_crypto_data;
+
+-- Spot-check data in the processed layer
+SELECT * FROM processed_crypto_data LIMIT 5;
+```
+
+All tables were present, schemas matched the expected structure, and partitions were correctly registered by `updated_date`.
+
+**Analytics output verification**
+The final analytics output in `data/analytics/` was spot-checked against the raw data to confirm the composite ranking logic produced the expected ordering across coins.
 
 ---
 
@@ -193,23 +257,25 @@ sbt package
 
 This compiles `processing.scala` and `analysis.scala` into a single JAR at `target/scala-2.13/cryptomarketanalysis_2.13-1.1.jar`, which Airflow submits to Spark.
 
-### 5. Configure Airflow
+### 5. Start Airflow and Configure the DAG
+
 Start Airflow in standalone mode by running the following command in the terminal:
-bashairflow standalone
 
-This will start the Airflow UI at http://localhost:8080. Login credentials are generated automatically and can be found in the `simple_auth_manager_passwords.json.generated` file in the Airflow home directory.
+```bash
+airflow standalone
+```
 
-In the Airflow UI, set the following before triggering the DAG:
+This will start the Airflow UI at [http://localhost:8080](http://localhost:8080). Login credentials are generated automatically and can be found in the `standalone_admin_password.txt` file in the Airflow home directory.
+
+Once logged in, set the following before triggering the DAG:
 
 - **Variable** — `crypto_project_base_path`: the absolute path to the project root on your machine.
 - **Connection** — `spark_default`: a Spark connection pointing to your local Spark installation.
 
 ### 6. Trigger the DAG
 
-Start Airflow in standalone mode and enable the `cryptoAnalysisPipeline` DAG. The pipeline will run daily, or can be triggered manually for a specific execution date.
+Enable the `cryptoAnalysisPipeline` DAG in the Airflow UI. The pipeline will run daily at the scheduled interval, or can be triggered manually for a specific execution date.
 
 ### 7. View the Output
 
 Analytical results are written to `data/analytics/` after each successful run. Hive external tables are registered and updated automatically during each pipeline execution.
-
-
