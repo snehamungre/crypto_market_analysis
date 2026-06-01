@@ -188,3 +188,7 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 /metastore_db
+# Default ignored files
+/shelf/
+/workspace.xml
+.idea/
